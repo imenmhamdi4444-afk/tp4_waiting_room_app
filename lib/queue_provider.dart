@@ -1,27 +1,88 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:waiting_room_app/data/queue_repository.dart';
+import 'package:waiting_room_app/models/client.dart';
 
 class QueueProvider extends ChangeNotifier {
-  final List<String> _clients = [];
+  QueueProvider(this._repository) {
+    _subscription = _repository.watchClients().listen(
+      (clients) {
+        _clients
+          ..clear()
+          ..addAll(clients);
+        _isLoading = false;
+        _errorMessage = null;
+        notifyListeners();
+      },
+      onError: (Object error) {
+        _isLoading = false;
+        _errorMessage = 'Could not load the waiting list: $error';
+        notifyListeners();
+      },
+    );
+  }
 
-  List<String> get clients => List.unmodifiable(_clients);
+  final QueueRepository _repository;
+  final List<Client> _clients = [];
+  late final StreamSubscription<List<Client>> _subscription;
 
-  void addClient(String name) {
-    if (name.trim().isNotEmpty) {
-      _clients.add(name.trim());
-      notifyListeners();
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  List<Client> get clients => List.unmodifiable(_clients);
+  bool get isLoading => _isLoading;
+  String? get errorMessage => _errorMessage;
+
+  Future<bool> addClient(String name) async {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) {
+      return false;
+    }
+
+    _clearError();
+    try {
+      await _repository.addClient(trimmedName);
+      return true;
+    } on QueueRepositoryException catch (error) {
+      _setError('Could not add client: ${error.message}');
+      return false;
     }
   }
 
-  void removeClient(String name) {
-    if (_clients.remove(name)) {
-      notifyListeners();
+  Future<void> removeClient(String id) async {
+    _clearError();
+    try {
+      await _repository.removeClient(id);
+    } on QueueRepositoryException catch (error) {
+      _setError('Could not remove client: ${error.message}');
     }
   }
 
-  void nextClient() {
-    if (_clients.isNotEmpty) {
-      _clients.removeAt(0);
-      notifyListeners();
+  Future<void> nextClient() async {
+    if (_clients.isEmpty) {
+      return;
     }
+
+    await removeClient(_clients.first.id);
+  }
+
+  void _clearError() {
+    if (_errorMessage == null) {
+      return;
+    }
+    _errorMessage = null;
+    notifyListeners();
+  }
+
+  void _setError(String message) {
+    _errorMessage = message;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    unawaited(_subscription.cancel());
+    super.dispose();
   }
 }
